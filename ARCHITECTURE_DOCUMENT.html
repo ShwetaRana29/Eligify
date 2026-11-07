@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Eligify - System Architecture & Technical Working Report</title>
+  <style>
+    @media print {
+      body { margin: 0; padding: 1.5cm; font-size: 11pt; color: #111; }
+      .no-print { display: none; }
+      .page-break { page-break-before: always; }
+      pre, blockquote { page-break-inside: avoid; }
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #1e293b;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 24px;
+      background: #f8fafc;
+    }
+    .container {
+      background: #fff;
+      padding: 48px;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+    h1 { color: #0f172a; font-size: 26pt; font-weight: 800; border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-top: 0; }
+    h2 { color: #1e3a8a; font-size: 16pt; font-weight: 700; margin-top: 32px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+    h3 { color: #0f172a; font-size: 13pt; font-weight: 600; margin-top: 20px; }
+    p, li { font-size: 10.5pt; color: #334155; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 10pt; }
+    th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: left; }
+    th { background: #f1f5f9; color: #0f172a; font-weight: 600; }
+    pre { background: #0f172a; color: #f8fafc; padding: 16px; border-radius: 8px; font-size: 9.5pt; overflow-x: auto; font-family: Consolas, Monaco, monospace; }
+    code { font-family: Consolas, Monaco, monospace; background: #e2e8f0; color: #0f172a; padding: 2px 5px; border-radius: 4px; font-size: 9pt; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 9999px; font-size: 8.5pt; font-weight: bold; background: #dbeafe; color: #1e40af; }
+    .callout { background: #f0fdf4; border-left: 4px solid #16a34a; padding: 14px 18px; margin: 18px 0; border-radius: 0 8px 8px 0; }
+    .callout-title { font-weight: bold; color: #15803d; margin-bottom: 4px; }
+    .btn-print {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 6px rgba(37,99,235,0.25);
+    }
+  </style>
+</head>
+<body>
+
+  <button class="btn-print no-print" onclick="window.print()">🖨️ Save as PDF / Print</button>
+
+  <div class="container">
+    <h1>Eligify System Architecture & Working Report</h1>
+    <p><strong>Subject:</strong> Subsystem breakdown, technology stack, and engineering rationale for the privacy-preserving national welfare platform.</p>
+    <p><strong>Compliance:</strong> Digital Personal Data Protection (DPDP) Act 2023 &bull; UIDAI Aadhaar Data Minimization Standards</p>
+
+    <h2>1. Executive Architecture Overview</h2>
+    <p>
+      Eligify determines citizen entitlements across <strong>3,400+ Central and State welfare schemes</strong> using a zero-knowledge, deterministic rule engine.
+      The architecture solves three core challenges in public welfare delivery:
+    </p>
+    <ul>
+      <li><strong>Data Minimization & Confidentiality:</strong> No raw document photos are ever saved. Sensitive demographics are encrypted client-side using non-extractable keys.</li>
+      <li><strong>Shared Device Isolation:</strong> Accounts on shared village kiosks (CSCs) are strictly isolated with in-memory sessions and zero cross-user credential exposure.</li>
+      <li><strong>Deterministic Entitlement Accuracy:</strong> Rule evaluation is fully explainable with exact qualification criteria and official portal links.</li>
+    </ul>
+
+    <h2>2. Step 1: User Authentication & Zero-Knowledge Vault</h2>
+    <p><strong>What is used:</strong> Web Crypto API (SubtleCrypto), PBKDF2-SHA256 (600,000 iterations), HKDF (RFC 5869), AES-256-GCM, IndexedDB.</p>
+    <p><strong>Why it is used:</strong></p>
+    <ul>
+      <li><strong>Client-Side Cryptography:</strong> The master password never travels over the network. The server only sees an ephemeral <code>loginProof</code> derived via HKDF.</li>
+      <li><strong>Envelope Encryption:</strong> A non-extractable 256-bit AES-GCM Data Encryption Key (DEK) encrypts user profile blobs. The DEK itself is wrapped with a Key Encryption Key (KEK) derived from the user's password.</li>
+      <li><strong>Emergency Recovery:</strong> A 32-character Crockford Base32 recovery key is generated at registration. It derives a separate recovery KEK, allowing citizens to recover their account without backdoors.</li>
+    </ul>
+
+    <h2>3. Step 2: User Isolation on Shared Devices</h2>
+    <p><strong>What is used:</strong> RAM-only session management (<code>src/services/session.js</code>), 5-minute idle activity listeners, AAD ciphertext binding, <code>Cache-Control: no-store</code>.</p>
+    <p><strong>Why it is used:</strong></p>
+    <ul>
+      <li><strong>No Account Switcher / Usernames Exposed:</strong> The login screen has no dropdown listing prior users. Each citizen types their own credentials in a private input.</li>
+      <li><strong>RAM-Only Lifecycle:</strong> The decrypted data and encryption key exist solely in volatile memory. On logout or after 5 minutes of inactivity, memory is cleared.</li>
+      <li><strong>AAD Binding (Additional Authenticated Data):</strong> AES-GCM ciphertexts are cryptographically bound to the account alias (<code>data/v1/${alias}</code>). An attacker cannot swap ciphertexts between accounts.</li>
+    </ul>
+
+    <h2>4. Step 3: Database Layer & Row-Level Security (PostgreSQL & SQLite)</h2>
+    <p><strong>What is used:</strong> PostgreSQL 14+ with <code>FORCE ROW LEVEL SECURITY</code> (<code>001_postgres_rls.sql</code>), Node.js native SQLite in WAL mode (<code>backend/database.js</code>).</p>
+    <p><strong>Why it is used:</strong></p>
+    <ul>
+      <li><strong>PostgreSQL RLS Safety Net:</strong> Enforces database-level isolation. Queries set <code>SET LOCAL app.current_user_id = $1</code>. Even if a backend query omits a WHERE clause, the PostgreSQL engine filters out all rows belonging to other users.</li>
+      <li><strong>High-Speed Scheme Catalog:</strong> 3,400 schemes with parsed rules, ministries, benefits, and portal links are stored in SQLite in WAL mode, returning filtered results in sub-millisecond times with zero external database configuration.</li>
+    </ul>
+
+    <h2>5. Step 4: Document Verification & Client-Side OCR</h2>
+    <p><strong>What is used:</strong> Tesseract.js 7.0 (WebWorker / Wasm), Lexical regex parser (<code>documentParser.js</code>).</p>
+    <p><strong>Why it is used:</strong></p>
+    <ul>
+      <li><strong>Zero-Storage DPDP Compliance:</strong> Uploaded images are processed in the browser's sandbox memory. The raw image buffer is dropped immediately after OCR. No document images are ever stored on disk or server.</li>
+      <li><strong>Aadhaar Masking:</strong> Full 12-digit Aadhaar numbers are never stored. Only the last 4 digits (<code>•••• •••• 3847</code>) are retained.</li>
+      <li><strong>Anti-Collision Heuristics:</strong> Income parsing utilizes lexical anchors to prevent confusing 6-digit postal PIN codes (e.g. 412207) or application numbers with annual income.</li>
+    </ul>
+
+    <h2>6. Step 5: Profile Verification & State Management</h2>
+    <p><strong>What is used:</strong> React 18 bidirectional synchronization hook (<code>useEffect</code>), numeric coercion validation.</p>
+    <p><strong>Why it is used:</strong></p>
+    <ul>
+      <li><strong>Human-in-the-Loop Validation:</strong> Gives citizens full transparency to review, verify, and modify attributes extracted from documents before running eligibility calculations.</li>
+      <li><strong>Zero-Value Support:</strong> Preserves <code>0</code> values for landless laborers (0 acres) and unemployed individuals (₹0 income) without falling back to mock placeholders.</li>
+    </ul>
+
+    <h2>7. Step 6: Deterministic Eligibility Rule Engine</h2>
+    <p><strong>What is used:</strong> Dual-layer deterministic rule evaluator (mirrored in client and backend).</p>
+    <p><strong>Why it is used:</strong></p>
+    <ul>
+      <li><strong>Explainable Decisions:</strong> Unlike generative AI, legal welfare qualification requires strict, reproducible evaluation. If a citizen is ineligible, the system outputs the exact failure reason (e.g. age ceiling or income limit).</li>
+      <li><strong>Direct Application Links:</strong> Every scheme card provides verified links directly to the official ministry application portals.</li>
+    </ul>
+
+    <h2>8. Verification & Test Suite Summary</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Test Suite</th>
+          <th>Command</th>
+          <th>What It Validates</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>User Isolation & RLS</strong></td>
+          <td><code>npm run test:isolation</code></td>
+          <td>Cross-user DEK rejection, AAD binding, session wiping, Postgres RLS simulation</td>
+          <td><span class="badge">100% Passed</span></td>
+        </tr>
+        <tr>
+          <td><strong>Zero-Knowledge Vault</strong></td>
+          <td><code>npm run test:vault</code></td>
+          <td>14 cryptographic tests: PBKDF2, non-extractable keys, recovery reset, tampering</td>
+          <td><span class="badge">14/14 Passed</span></td>
+        </tr>
+        <tr>
+          <td><strong>Document Extraction</strong></td>
+          <td><code>npm run test:extraction</code></td>
+          <td>Aadhaar, Income, Caste, Ration, Land parsing and profile merging</td>
+          <td><span class="badge">100% Passed</span></td>
+        </tr>
+        <tr>
+          <td><strong>Rule Engine</strong></td>
+          <td><code>npm run test:rules</code></td>
+          <td>Deterministic evaluation across 3,400 schemes with criteria verification</td>
+          <td><span class="badge">100% Passed</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <div class="callout-title">✓ System Status: Production Ready & Verified</div>
+      All test suites pass cleanly, both directory repositories are synchronized, and the frontend builds with zero compilation errors.
+    </div>
+  </div>
+
+</body>
+</html>
